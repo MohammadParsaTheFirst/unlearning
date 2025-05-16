@@ -370,6 +370,9 @@ class DeleteCeleb(Task):
         sigma = (1 - noise_scheduler.alphas_cumprod) ** 0.5
         sigma = sigma.to(accelerator.device)
 
+        """
+        Here is where we define the loss function of ourself
+        """
         loss_class = DDPMDeletionLoss(gamma=gamma, sigma=sigma) #, frac_deletion=self.cfg.deletion.frac_deletion)
         loss_fn = getattr(loss_class, self.cfg.deletion.loss_fn)
 
@@ -679,10 +682,35 @@ class DeleteCeleb(Task):
                     )
                 
                 # breakpoint()
+                """
+                here we got serious problems --- yet we resolved it
+                if any loss gets added this section must differ to others.
+                """
                 if loss is not None:
                     loss = loss.sum() / self.cfg.train_batch_size
                     accelerator.backward(loss)
-                else:
+                elif self.cfg.deletion.loss_fn == "importance_sampling_with_adaptive_decayed_mixture":
+                    weighted_loss_x = weighted_loss_x.sum() / self.cfg.train_batch_size
+                    weighted_loss_a = weighted_loss_a.sum() / self.cfg.train_batch_size
+
+                    # Since this loss function does a double backward on weighted_loss_x and weighted_loss_a,
+                    # retain_graph=True is needed to avoid errors when backward is called twice
+                    accelerator.backward(weighted_loss_x, retain_graph=True)
+
+                    gradients_loss_x = {}
+                    for name, param in unet.named_parameters():
+                        gradients_loss_x[name] = param.grad.clone()
+
+                    accelerator.backward(weighted_loss_a)
+
+                    for name, param in unet.named_parameters():
+                        true_grad = param.grad.clone() - gradients_loss_x[name]
+                        if name not in accum_loss_a:
+                            accum_loss_a[name] = true_grad
+                        else:
+                            accum_loss_a[name] += true_grad
+
+                else: # ssis default
                     weighted_loss_x = weighted_loss_x.sum() / self.cfg.train_batch_size
                     weighted_loss_a = weighted_loss_a.sum() / self.cfg.train_batch_size
 
