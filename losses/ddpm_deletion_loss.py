@@ -1,4 +1,5 @@
 import torch
+import math
 import matplotlib.pyplot as plt
 
 class DDPMDeletionLoss:
@@ -8,7 +9,7 @@ class DDPMDeletionLoss:
         self.all_sigma = sigma
         # self.frac_deletion = frac_deletion # same as K / N
 
-        self.num_timesteps = 59#num_timesteps
+        self.num_timesteps = 60#num_timesteps
         self.tracked_L_retain = []
         self.tracked_L_forget = []
         self.tracked_lambdas = []
@@ -21,25 +22,23 @@ class DDPMDeletionLoss:
         conditioning,
         all_samples_dict,
         deletion_samples_dict,
-        lambd
+        lambd, step
     ):
         """
         Adaptive importance sampling loss with exponentially decaying lambda.
         Signature matches importance_sampling_with_mixture. ---> to be added also other loss_fn's!
         """
-        step = conditioning.get("step", 0)  # current training step should be tracked by self
-        #total_steps = self.total_steps if hasattr(self, 'total_steps') else 100000  # fallback
-
         gamma = self.all_gamma[timesteps]
         sigma = self.all_sigma[timesteps]
-
-        # Compute decayed lambda
         """
         the decaying lambda from 1 to 1/2 
         """
-        lambda_t = 0.5 + 0.5 * torch.exp(-5 * step / timesteps)
-        lambda_t = torch.clamp(lambda_t, 0.5)  # Clamp lower bound
-
+        lambda_scalar = 0.5 + 0.5 * math.exp(-5 * step / 60)
+        lambda_scalar = max(lambda_scalar, 0.5)
+        lambda_t = torch.tensor(lambda_scalar, device=all_samples_dict['noisy_latents'].device)
+        print(f'step= {step}')
+        print(f'lambda_{step} = {lambda_t}')
+        print('-----------')
         # TODO: Add sanity check that the noises with gamma and sigma reconstruct the noisy latents
         batch_size = all_samples_dict['noisy_latents'].shape[0]
         all_mask = (torch.rand(batch_size) > lambd) # 1 - lambd prob for all sample
@@ -67,13 +66,14 @@ class DDPMDeletionLoss:
 
         ratio_a_x = torch.exp(dist_x - dist_a)
         ratio_x_a = torch.exp(dist_a - dist_x)
-
+        """"
+        here is the lambda changed to adaptive (decaying)  
+        """
         importance_weight_x = 1 / ((1 - lambda_t) + lambda_t * ratio_a_x)
         importance_weight_a = 1 / ((1 - lambda_t) * ratio_x_a + lambda_t)
 
         weighted_loss_x = importance_weight_x[:, None, None, None] * loss_x
         weighted_loss_a = importance_weight_a[:, None, None, None] * loss_a
-        
 
         """
         plotting the losses & lambda over the timesteps
@@ -83,7 +83,7 @@ class DDPMDeletionLoss:
         self.tracked_L_retain.append(L_retain)
         self.tracked_L_forget.append(L_forget)
         self.tracked_lambdas.append(lambda_t)
-        if (timesteps == self.num_timesteps - 1).any():
+        if (step == self.num_timesteps - 1):
         #if timesteps.max() == self.num_timesteps - 1:  # Trigger plot at end of schedule
             fig, axs = plt.subplots(2, 1, figsize=(8, 8))
 

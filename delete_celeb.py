@@ -404,6 +404,10 @@ class DeleteCeleb(Task):
             unet.train()
             return generated_images
         
+
+        """
+        this function is useful for later --------------
+        """
         def evaluate_unlearning_timestep(unet, timestep, clean_image, num_imgs_to_generate=self.cfg.eval_batch_size, batch_size=self.cfg.eval_batch_size):
             unet.eval()
             unet = accelerator.unwrap_model(unet)
@@ -620,12 +624,27 @@ class DeleteCeleb(Task):
             with accelerator.accumulate(unet):
                 # Predict the noise residual
                 # model_output = unet(noisy_all_images, timesteps).sample
-
+                
+                 
                 if self.cfg.scheduler.prediction_type == "epsilon":
-                    items = loss_fn(unet, timesteps, noise, {}, all_samples_dict, deletion_samples_dict, **self.cfg.deletion.loss_params)
+
+                    """
+                    ---------------------------------------------------------------------
+                    here it passses the new loss function the global timestep
+                    this is very important
+                    -------------------------------------------------------------------------
+                    """
+                    
+                    if (self.cfg.deletion.loss_fn == 'importance_sampling_with_adaptive_decayed_mixture'):
+                        items = loss_fn(unet, timesteps, noise, {}, all_samples_dict, deletion_samples_dict, **self.cfg.deletion.loss_params, step = global_step)
+                    else:
+                        items = loss_fn(unet, timesteps, noise, {}, all_samples_dict, deletion_samples_dict, **self.cfg.deletion.loss_params)
                     loss, loss_x, loss_a, importance_weight_x, importance_weight_a, weighted_loss_x, weighted_loss_a = (
                         items
                     )
+                    """
+        maybe here is where we need to plot stuff at the end --------
+        """
                     batch_stats = {}
                     if loss is not None:
                         print("loss:", loss.mean().item())
@@ -685,6 +704,8 @@ class DeleteCeleb(Task):
                 """
                 here we got serious problems --- yet we resolved it
                 if any loss gets added this section must differ to others.
+                here we may change the gradient updating a little bit for syntax
+                ----------------------------------------------------------------
                 """
                 if loss is not None:
                     loss = loss.sum() / self.cfg.train_batch_size
